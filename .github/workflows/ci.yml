@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 校验 SKILL.md frontmatter
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("SKILL.md").read_text(encoding="utf-8")
+          assert text.startswith("---\n"), "SKILL.md 必须以 YAML frontmatter 开头"
+          fm = text.split("---", 2)[1]
+          for key in ("name:", "description:"):
+              assert key in fm, f"frontmatter 缺少 {key}"
+          print("frontmatter OK")
+          PY
+
+      - name: 脚本语法
+        run: python -m py_compile scripts/*.py
+
+      - name: 校准断言
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          r = subprocess.run([sys.executable, "scripts/meeting_cost.py", "--people", "8",
+                              "--minutes", "60", "--repeat", "weekly", "--salary", "22000", "--json"],
+                             capture_output=True, text=True, encoding="utf-8")
+          d = json.loads(r.stdout)
+          print("8 人周会年成本", d["cost_per_year"], "折合工作日", d["person_days_per_year"])
+          assert d["cost_per_year"] == 71648, f"成本算错了：{d['cost_per_year']}"
+          assert abs(d["person_days_per_year"] - 70.8) < 0.2
+          assert d["lean"]["saving"] > 0
+          print("calibration OK")
+          PY
+
+      - name: README 相对链接可解析
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("README.md").read_text(encoding="utf-8")
+          bad = [m.group(1) for m in re.finditer(r"\]\((\./[^)#]+)\)", text)
+                 if not Path(m.group(1)).exists()]
+          assert not bad, f"README 里有死链: {bad}"
+          print("links OK")
+          PY
